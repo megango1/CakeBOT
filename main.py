@@ -41,7 +41,7 @@ def _all(table: str, order: str = "created_at", desc: bool = True, limit: int = 
     return q.execute().data
 
 def _count(table: str, filters: dict | None = None):
-    q = supabase.table(table).select("id", count="exact")
+    q = supabase.table(table).select("*", count="exact")
     if filters:
         for k, v in filters.items():
             q = q.eq(k, v)
