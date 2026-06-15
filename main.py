@@ -9,9 +9,9 @@ from datetime import datetime
 from collections import Counter
 from supabase import create_client, Client
 
-TOKEN = os.environ.get ("8740260888:AAHRNhlp0uhjPhr-NnEbB3kqKgURV3t1UOc")
-SUPABASE_URL = os.environ.get("SUPABASE_URL", "https://cfmcjjiisvzfesyiiqom.supabase.co")
-SUPABASE_KEY = os.environ.get("eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImNmbWNqamlpc3Z6ZmVzeWlpcW9tIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc4MTU0NzAwNywiZXhwIjoyMDk3MTIzMDA3fQ.9XRT5yeG8vd1DFXVjvbyRKs6w0ri2ihjC2P-_Mzd9c8")
+TOKEN = os.environ.get("TOKEN")
+SUPABASE_URL = os.environ.get("SUPABASE_URL")
+SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
 
 if not SUPABASE_KEY:
     raise RuntimeError("SUPABASE_KEY не знайдено в змінних середовища")
