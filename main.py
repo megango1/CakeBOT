@@ -278,6 +278,7 @@ def format_order_text(o):
         f"📦 *Замовлення #{o['id']}*\n"
         f"📅 {created}\n"
         f"👤 {o['client_name']}\n"
+        f"🆔 ID: `{o['client_id']}`\n"
         f"📞 {o['phone']}\n"
         f"🍰 {o['filling']}\n"
         f"⚖️ {o['kg']} кг\n"
@@ -371,18 +372,18 @@ def cakes_keyboard():
     return markup
 
 def fillings_inline():
-    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup = types.InlineKeyboardMarkup(row_width=1)
     buttons = [
-        types.InlineKeyboardButton("🍰 Бісквіт з фруктами",     callback_data="fill_Бісквіт з фруктами"),
-        types.InlineKeyboardButton("🍓 Полуничне тірамісу",      callback_data="fill_Полуничне тірамісу"),
-        types.InlineKeyboardButton("🍒 Вишня-шоколад",           callback_data="fill_Вишня-шоколад"),
-        types.InlineKeyboardButton("🫐 Лісові ягоди",            callback_data="fill_Лісові ягоди"),
-        types.InlineKeyboardButton("🥭 Манго-маракуя",           callback_data="fill_Манго-маракуя"),
-        types.InlineKeyboardButton("🍌 Горіхова карамель-банан", callback_data="fill_Горіхова карамель-банан"),
-        types.InlineKeyboardButton("🍪 Орео",                    callback_data="fill_Орео"),
-        types.InlineKeyboardButton("🌿 Фісташка-малина",         callback_data="fill_Фісташка-малина"),
-        types.InlineKeyboardButton("🍫 Ферреро Роше",            callback_data="fill_Ферреро Роше"),
-        types.InlineKeyboardButton("🍫 Трюфель",                 callback_data="fill_Трюфель"),
+        types.InlineKeyboardButton("🍰 Бісквіт з фруктами — 1200 грн/кг",     callback_data="fill_Бісквіт з фруктами"),
+        types.InlineKeyboardButton("🍓 Полуничне тірамісу — 1200 грн/кг",      callback_data="fill_Полуничне тірамісу"),
+        types.InlineKeyboardButton("🍒 Вишня-шоколад — 1300 грн/кг",           callback_data="fill_Вишня-шоколад"),
+        types.InlineKeyboardButton("🫐 Лісові ягоди — 1300 грн/кг",            callback_data="fill_Лісові ягоди"),
+        types.InlineKeyboardButton("🥭 Манго-маракуя — 1400 грн/кг",           callback_data="fill_Манго-маракуя"),
+        types.InlineKeyboardButton("🍌 Горіхова карамель-банан — 1400 грн/кг", callback_data="fill_Горіхова карамель-банан"),
+        types.InlineKeyboardButton("🍪 Орео — 1400 грн/кг",                    callback_data="fill_Орео"),
+        types.InlineKeyboardButton("🌿 Фісташка-малина — 1500 грн/кг",         callback_data="fill_Фісташка-малина"),
+        types.InlineKeyboardButton("🍫 Ферреро Роше — 1500 грн/кг",            callback_data="fill_Ферреро Роше"),
+        types.InlineKeyboardButton("🍫 Трюфель — 1500 грн/кг",                 callback_data="fill_Трюфель"),
     ]
     markup.add(*buttons)
     markup.add(types.InlineKeyboardButton("❌ Скасувати замовлення", callback_data="order_cancel"))
@@ -945,16 +946,16 @@ def contacts(message):
     text = (
         "📍 *Контакти та самовивіз*\n\n"
         "🏬 *Адреса:*\n"
-        "м. Львів, вул. Пасічна, 188а\n"
-        "_(біля ТРЦ Вікторія Гарденс)_\n\n"
+        "м. Львів, проспект Свободи, 35\n"
+        "_(біля Оперного Театру)_\n\n"
         "📞 *Телефон:*\n"
         "+380XXXXXXXXX\n\n"
         "💬 *Instagram / Viber / WhatsApp:*\n"
-        "@cakebot\n\n"
+        "@cakeshop\n\n"
         "🕐 *Години роботи:*\n"
         "Пн–Пт: 09:00 – 19:00\n"
         "Сб–Нд: 10:00 – 18:00\n\n"
-        "📦 Самовивіз — безкоштовно\n"
+        "📦 Самовивіз — за домовленістю\n"
         "🚗 Доставка — за домовленістю\n\n"
         "👇 Натисніть кнопку нижче щоб відкрити локацію на карті:"
     )
@@ -965,7 +966,7 @@ def contacts(message):
 @bot.callback_query_handler(func=lambda call: call.data == "send_location")
 def send_location(call):
     bot.answer_callback_query(call.id)
-    bot.send_location(call.message.chat.id, VICTORIA_GARDENS_LAT, VICTORIA_GARDENS_LON)
+    bot.send_location(call.message.chat.id, 49.842915, 24.026029)
 
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
