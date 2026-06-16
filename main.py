@@ -224,6 +224,37 @@ def db_add_faq(question, answer):
 def db_delete_faq(faq_id):
     _delete("faq", {"id": faq_id})
 
+# ── Fillings ───────────────────────────────────────────────────────────────────
+
+INITIAL_FILLINGS = [
+    ("Бісквіт з фруктами",     1200),
+    ("Полуничне тірамісу",      1200),
+    ("Вишня-шоколад",           1300),
+    ("Лісові ягоди",            1300),
+    ("Манго-маракуя",           1400),
+    ("Горіхова карамель-банан", 1400),
+    ("Орео",                    1400),
+    ("Фісташка-малина",         1500),
+    ("Ферреро Роше",            1500),
+    ("Трюфель",                 1500),
+]
+
+def db_init_fillings():
+    if _count("fillings") == 0:
+        for name, price in INITIAL_FILLINGS:
+            _insert("fillings", {"name": name, "price": price})
+
+def db_get_fillings():
+    return _all("fillings", order="id", desc=False)
+
+def db_add_filling(name, price):
+    row = _insert("fillings", {"name": name, "price": price})
+    return row["id"]
+
+def db_delete_filling(filling_id):
+    _delete("fillings", {"id": filling_id})
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
 def parse_created_at(value):
