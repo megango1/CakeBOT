@@ -492,7 +492,8 @@ def admin_stats(message):
         f"  {i+1}. {name} — {cnt} шт." for i, (name, cnt) in enumerate(top3)
     ) if top3 else "  —"
     done_pct = round(s["done"] / s["total"] * 100) if s["total"] else 0
-    revenue_min = sum(CAKE_PRICES.get(name, 1300) * cnt * 2 for name, cnt in filling_counter.items())
+    filling_prices = {f["name"]: f["price"] for f in db_get_fillings()}
+    revenue_min = sum(filling_prices.get(name, 1300) * cnt * 2 for name, cnt in filling_counter.items())
     text = (
         f"📊 *Статистика кондитерської*\n\n"
         f"📦 Всього замовлень: *{s['total']}*\n"
@@ -1036,6 +1037,34 @@ def admin_add_faq(message):
         "➕ *Додати питання в FAQ*\n\nКрок 1/2 — Введіть *текст питання*:",
         parse_mode="Markdown")
 
+@bot.message_handler(commands=['addfilling'])
+def admin_add_filling(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    admin_state[message.chat.id] = {"state": "adding_filling_name"}
+    bot.send_message(message.chat.id,
+        "➕ *Додати начинку*
+
+Крок 1/2 — Введіть *назву начинки*:",
+        parse_mode="Markdown")
+
+@bot.message_handler(commands=['delfilling'])
+def admin_del_filling(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    rows = db_get_fillings()
+    if not rows:
+        bot.send_message(message.chat.id, "📭 Начинок немає.")
+        return
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for f in rows:
+        markup.add(types.InlineKeyboardButton(
+            f"❌ {f['name']} ({f['price']} грн/кг)",
+            callback_data=f"delfill_{f['id']}"
+        ))
+    bot.send_message(message.chat.id, "🗑️ *Оберіть начинку для видалення:*",
+        parse_mode="Markdown", reply_markup=markup)
+
 @bot.message_handler(commands=['delfaq'])
 def admin_del_faq(message):
     if message.chat.id != ADMIN_ID:
@@ -1302,6 +1331,7 @@ ADMIN_STATES = (
     "writing", "answering", "adding_faq_q", "adding_faq_a",
     "broadcasting", "searching", "adding_photo_caption",
     "adding_tpl_title", "adding_tpl_text", "sending_template",
+    "adding_filling_name", "adding_filling_price",
 )
 
 @bot.message_handler(
@@ -1390,6 +1420,24 @@ def admin_reply_handler(message):
             f"✅ *Шаблон #{tpl_id} збережено!*\n\n📌 {state['title']}\n\n_{message.text}_",
             parse_mode="Markdown")
 
+    elif current == "adding_filling_name":
+        admin_state[message.chat.id] = {"state": "adding_filling_price", "name": message.text}
+        bot.send_message(message.chat.id,
+            f"✅ Назва: _«{message.text}»_\n\nКрок 2/2 — Введіть *ціну за кг* (тільки число, наприклад 1400):",
+            parse_mode="Markdown")
+
+    elif current == "adding_filling_price":
+        admin_state.pop(message.chat.id, None)
+        try:
+            price = int(message.text.strip())
+        except ValueError:
+            bot.send_message(message.chat.id, "❌ Ціна має бути числом. Спробуй ще раз: /addfilling")
+            return
+        fid = db_add_filling(state.get("name", ""), price)
+        bot.send_message(message.chat.id,
+            f"✅ *Начинку додано!*\n\n🍰 {state.get('name')}\n💰 {price} грн/кг",
+            parse_mode="Markdown")
+
     elif current == "sending_template":
         admin_state.pop(message.chat.id, None)
         try:
@@ -1403,6 +1451,18 @@ def admin_reply_handler(message):
         except Exception as e:
             bot.send_message(message.chat.id,
                 f"❌ Не вдалося надіслати. Перевірте ID.\n_{e}_", parse_mode="Markdown")
+
+# ── Delete filling callback ───────────────────────────────────────────────
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("delfill_"))
+def handle_delete_filling(call):
+    fid = int(call.data.split("_")[1])
+    rows = db_get_fillings()
+    name = next((f["name"] for f in rows if f["id"] == fid), f"#{fid}")
+    db_delete_filling(fid)
+    bot.answer_callback_query(call.id, "✅ Начинку видалено")
+    bot.edit_message_text(f"✅ Начинку *{name}* видалено.",
+        call.message.chat.id, call.message.message_id, parse_mode="Markdown")
 
 # ── Delete order ───────────────────────────────────────────────────────────────
 
@@ -1486,6 +1546,7 @@ def export_orders(message):
 
 if __name__ == "__main__":
     print("🔗 Підключення до Supabase...")
+    db_init_fillings()
     db_init_faq()
     print("✅ Бот запущено! База — Supabase (REST API)")
     bot.polling(none_stop=True)
