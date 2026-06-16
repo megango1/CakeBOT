@@ -570,14 +570,14 @@ def handle_repeat(call):
         oid = db_save_order(chat_id, orig["client_name"], orig["phone"],
                             orig["filling"], orig["kg"], orig["description"])
         bot.send_message(ADMIN_ID,
-            f"📦 НОВЕ ЗАМОВЛЕННЯ #{oid} _(повтор #{orig_id})_:\n\n"
+            f"📦 НОВЕ ЗАМОВЛЕННЯ:\n\n"
             f"👤 {orig['client_name']}\n📞 {orig['phone']}\n"
             f"🍰 {orig['filling']}\n⚖️ {orig['kg']} кг\n✏️ {orig['description']}\n📎 Медіа: немає",
             parse_mode="Markdown", reply_markup=build_admin_markup(oid))
         bot.answer_callback_query(call.id, "✅ Замовлення створено!")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         bot.send_message(chat_id,
-            f"✅ *Замовлення №{oid} створено!*\n\nМи зв'яжемось з вами найближчим часом 😊",
+            f"✅ *Замовлення створено!*\n\nМи зв'яжемось з вами найближчим часом 😊",
             parse_mode="Markdown", reply_markup=main_keyboard())
 
 # ── Admin: orders ──────────────────────────────────────────────────────────────
