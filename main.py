@@ -1043,9 +1043,7 @@ def admin_add_filling(message):
         return
     admin_state[message.chat.id] = {"state": "adding_filling_name"}
     bot.send_message(message.chat.id,
-        "➕ *Додати начинку*
-
-Крок 1/2 — Введіть *назву начинки*:",
+        "➕ *Додати начинку*\n\nКрок 1/2 — Введіть *назву начинки*:",
         parse_mode="Markdown")
 
 @bot.message_handler(commands=['delfilling'])
