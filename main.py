@@ -1359,7 +1359,7 @@ def admin_reply_handler(message):
         sent = failed = 0
         for cid in clients:
             try:
-                bot.send_message(cid, f"📢 *Повідомлення від кондитерської:*\n\n{message.text}",
+                bot.send_message(cid, f"✨ *Маємо для вас інформацію:*\n\n{message.text}",
                     parse_mode="Markdown")
                 sent += 1
             except Exception:
