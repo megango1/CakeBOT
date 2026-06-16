@@ -374,16 +374,16 @@ def cakes_keyboard():
 def fillings_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
     buttons = [
-        types.InlineKeyboardButton("🍰 Бісквіт з фруктами — 1200 грн/кг",     callback_data="fill_Бісквіт з фруктами"),
-        types.InlineKeyboardButton("🍓 Полуничне тірамісу — 1200 грн/кг",      callback_data="fill_Полуничне тірамісу"),
-        types.InlineKeyboardButton("🍒 Вишня-шоколад — 1300 грн/кг",           callback_data="fill_Вишня-шоколад"),
-        types.InlineKeyboardButton("🫐 Лісові ягоди — 1300 грн/кг",            callback_data="fill_Лісові ягоди"),
-        types.InlineKeyboardButton("🥭 Манго-маракуя — 1400 грн/кг",           callback_data="fill_Манго-маракуя"),
-        types.InlineKeyboardButton("🍌 Горіхова карамель-банан — 1400 грн/кг", callback_data="fill_Горіхова карамель-банан"),
-        types.InlineKeyboardButton("🍪 Орео — 1400 грн/кг",                    callback_data="fill_Орео"),
-        types.InlineKeyboardButton("🌿 Фісташка-малина — 1500 грн/кг",         callback_data="fill_Фісташка-малина"),
-        types.InlineKeyboardButton("🍫 Ферреро Роше — 1500 грн/кг",            callback_data="fill_Ферреро Роше"),
-        types.InlineKeyboardButton("🍫 Трюфель — 1500 грн/кг",                 callback_data="fill_Трюфель"),
+        types.InlineKeyboardButton("🍰 Бісквіт з фруктами",     callback_data="fill_Бісквіт з фруктами"),
+        types.InlineKeyboardButton("🍓 Полуничне тірамісу",      callback_data="fill_Полуничне тірамісу"),
+        types.InlineKeyboardButton("🍒 Вишня-шоколад",           callback_data="fill_Вишня-шоколад"),
+        types.InlineKeyboardButton("🫐 Лісові ягоди",            callback_data="fill_Лісові ягоди"),
+        types.InlineKeyboardButton("🥭 Манго-маракуя",           callback_data="fill_Манго-маракуя"),
+        types.InlineKeyboardButton("🍌 Горіхова карамель-банан", callback_data="fill_Горіхова карамель-банан"),
+        types.InlineKeyboardButton("🍪 Орео",                    callback_data="fill_Орео"),
+        types.InlineKeyboardButton("🌿 Фісташка-малина",         callback_data="fill_Фісташка-малина"),
+        types.InlineKeyboardButton("🍫 Ферреро Роше",            callback_data="fill_Ферреро Роше"),
+        types.InlineKeyboardButton("🍫 Трюфель",                 callback_data="fill_Трюфель"),
     ]
     markup.add(*buttons)
     markup.add(types.InlineKeyboardButton("❌ Скасувати замовлення", callback_data="order_cancel"))
