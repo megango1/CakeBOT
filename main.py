@@ -391,15 +391,10 @@ def done_keyboard():
     return markup
 
 def cakes_keyboard():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(
-        "Бісквіт з фруктами",    "Полуничне тірамісу",
-        "Вишня-шоколад",          "Лісові ягоди",
-        "Манго-маракуя",          "Горіхова карамель-банан",
-        "Орео",                   "Фісташка-малина",
-        "Ферреро Роше",           "Трюфель",
-        "🔙 Назад"
-    )
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    names = [f["name"] for f in db_get_fillings()]
+    markup.add(*names)
+    markup.add("🔙 Назад")
     return markup
 
 def fillings_inline():
