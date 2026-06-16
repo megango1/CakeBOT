@@ -227,28 +227,28 @@ def db_delete_faq(faq_id):
 # ── Fillings ───────────────────────────────────────────────────────────────────
 
 INITIAL_FILLINGS = [
-    ("Бісквіт з фруктами",     1200),
-    ("Полуничне тірамісу",      1200),
-    ("Вишня-шоколад",           1300),
-    ("Лісові ягоди",            1300),
-    ("Манго-маракуя",           1400),
-    ("Горіхова карамель-банан", 1400),
-    ("Орео",                    1400),
-    ("Фісташка-малина",         1500),
-    ("Ферреро Роше",            1500),
-    ("Трюфель",                 1500),
+    ("Бісквіт з фруктами",     1200, "Бісквіт + крем + фрукти", None),
+    ("Полуничне тірамісу",      1200, "Маскарпоне + полуниця",   None),
+    ("Вишня-шоколад",           1300, "Шоколад + вишня",         None),
+    ("Лісові ягоди",            1300, "Ягідний мікс",            None),
+    ("Манго-маракуя",           1400, "Тропічний смак",          None),
+    ("Горіхова карамель-банан", 1400, "Карамель + банан",        None),
+    ("Орео",                    1400, "Крем + Oreo",             None),
+    ("Фісташка-малина",         1500, "Фісташка + малина",       None),
+    ("Ферреро Роше",            1500, "Шоколад + горіх",         None),
+    ("Трюфель",                 1500, "Шоколадний трюфель",      None),
 ]
 
 def db_init_fillings():
     if _count("fillings") == 0:
-        for name, price in INITIAL_FILLINGS:
-            _insert("fillings", {"name": name, "price": price})
+        for name, price, desc, photo in INITIAL_FILLINGS:
+            _insert("fillings", {"name": name, "price": price, "description": desc, "photo": photo})
 
 def db_get_fillings():
     return _all("fillings", order="id", desc=False)
 
-def db_add_filling(name, price):
-    row = _insert("fillings", {"name": name, "price": price})
+def db_add_filling(name, price, description=None, photo=None):
+    row = _insert("fillings", {"name": name, "price": price, "description": description, "photo": photo})
     return row["id"]
 
 def db_delete_filling(filling_id):
@@ -939,14 +939,17 @@ def price(message):
         "📋 Вимоги:\n\n• Мінімальне замовлення — 2 кг\n• Ціна вказана за 1 кг\n• Декор рахується окремо\n\n👇 Оберіть начинку:",
         reply_markup=cakes_keyboard())
 
-@bot.message_handler(func=lambda m: m.text in CAKES)
+@bot.message_handler(func=lambda m: m.text in [f["name"] for f in db_get_fillings()])
 def cake_info(message):
     if is_blocked_user(message):
         return
-    caption = CAKES[message.text]
-    photo = CAKE_PHOTOS.get(message.text)
-    if photo:
-        bot.send_photo(message.chat.id, photo, caption=caption)
+    fillings = db_get_fillings()
+    f = next((x for x in fillings if x["name"] == message.text), None)
+    if not f:
+        return
+    caption = f"{f['description']}\n💰 {f['price']} грн/кг" if f.get("description") else f"{f['name']}\n💰 {f['price']} грн/кг"
+    if f.get("photo"):
+        bot.send_photo(message.chat.id, f["photo"], caption=caption)
     else:
         bot.send_message(message.chat.id, caption)
 
@@ -1052,7 +1055,7 @@ def admin_add_filling(message):
         return
     admin_state[message.chat.id] = {"state": "adding_filling_name"}
     bot.send_message(message.chat.id,
-        "➕ *Додати начинку*\n\nКрок 1/2 — Введіть *назву начинки*:",
+        "➕ *Додати начинку*\n\nКрок 1/4 — Введіть *назву начинки*:",
         parse_mode="Markdown")
 
 @bot.message_handler(commands=['delfilling'])
@@ -1347,10 +1350,11 @@ ADMIN_STATES = (
     "writing", "answering", "adding_faq_q", "adding_faq_a",
     "broadcasting", "searching", "adding_photo_caption",
     "adding_tpl_title", "adding_tpl_text", "sending_template",
-    "adding_filling_name", "adding_filling_price",
+    "adding_filling_name", "adding_filling_price", "adding_filling_desc", "adding_filling_photo",
 )
 
 @bot.message_handler(
+    content_types=["text", "photo"],
     func=lambda m: m.chat.id == ADMIN_ID and admin_state.get(m.chat.id, {}).get("state") in ADMIN_STATES
 )
 def admin_reply_handler(message):
@@ -1439,19 +1443,34 @@ def admin_reply_handler(message):
     elif current == "adding_filling_name":
         admin_state[message.chat.id] = {"state": "adding_filling_price", "name": message.text}
         bot.send_message(message.chat.id,
-            f"✅ Назва: _«{message.text}»_\n\nКрок 2/2 — Введіть *ціну за кг* (тільки число, наприклад 1400):",
+            f"✅ Назва: _«{message.text}»_\n\nКрок 2/4 — Введіть *ціну за кг* (тільки число, наприклад 1400):",
             parse_mode="Markdown")
 
     elif current == "adding_filling_price":
-        admin_state.pop(message.chat.id, None)
         try:
             price = int(message.text.strip())
         except ValueError:
             bot.send_message(message.chat.id, "❌ Ціна має бути числом. Спробуй ще раз: /addfilling")
             return
-        fid = db_add_filling(state.get("name", ""), price)
+        admin_state[message.chat.id] = {**state, "state": "adding_filling_desc", "price": price}
         bot.send_message(message.chat.id,
-            f"✅ *Начинку додано!*\n\n🍰 {state.get('name')}\n💰 {price} грн/кг",
+            f"✅ Ціна: *{price} грн/кг*\n\nКрок 3/4 — Введіть *короткий опис* (наприклад: Шоколад + вишня):",
+            parse_mode="Markdown")
+
+    elif current == "adding_filling_desc":
+        admin_state[message.chat.id] = {**state, "state": "adding_filling_photo", "desc": message.text}
+        bot.send_message(message.chat.id,
+            f"✅ Опис: _{message.text}_\n\nКрок 4/4 — Надішліть *фото* начинки (або напишіть `-` щоб пропустити):",
+            parse_mode="Markdown")
+
+    elif current == "adding_filling_photo":
+        admin_state.pop(message.chat.id, None)
+        photo = None
+        if message.content_type == "photo":
+            photo = message.photo[-1].file_id
+        fid = db_add_filling(state.get("name", ""), state.get("price", 0), state.get("desc"), photo)
+        bot.send_message(message.chat.id,
+            f"✅ *Начинку додано!*\n\n🍰 {state.get('name')}\n💰 {state.get('price')} грн/кг\n📝 {state.get('desc')}\n🖼 {'є' if photo else 'немає'}",
             parse_mode="Markdown")
 
     elif current == "sending_template":
