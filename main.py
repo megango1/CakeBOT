@@ -1233,7 +1233,7 @@ def handle_order_confirm(call):
     bot.answer_callback_query(call.id, "✅ Замовлення відправлено!")
     bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
     bot.send_message(chat_id,
-        f"✅ Дякуємо! Ваше замовлення №{oid} прийнято.\nМи скоро з вами зв'яжемось 😊",
+        f"✅ Дякуємо! Ваше замовлення прийнято.\nМи скоро з вами зв'яжемось 😊",
         reply_markup=main_keyboard())
 
 # ── Status handler ─────────────────────────────────────────────────────────────
