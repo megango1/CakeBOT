@@ -1250,17 +1250,17 @@ def handle_status(call):
     client_id = order["client_id"]
     name = order["client_name"]
     if status == "work":
-        client_msg = (f"🔧 *Замовлення №{oid} прийнято в роботу!*\n\n"
+        client_msg = (f"🔧 *Замовлення прийнято в роботу!*\n\n"
                       f"Привіт, {name}! Ваш торт вже готується 🎂")
         admin_confirm = f"✅ Статус №{oid} → В роботі"
         db_update_status(oid, "work")
     elif status == "reject":
-        client_msg = (f"❌ *Замовлення №{oid} відхилено.*\n\n"
+        client_msg = (f"❌ *Замовлення відхилено.*\n\n"
                       f"Привіт, {name}! На жаль, ми не можемо виконати це замовлення.\nЗв'яжіться з нами 📞")
         admin_confirm = f"❌ Замовлення №{oid} відхилено"
         db_update_status(oid, "rejected")
     else:
-        client_msg = (f"🎂 *Замовлення №{oid} готове!*\n\n"
+        client_msg = (f"🎂 *Замовлення готове!*\n\n"
                       f"Привіт, {name}! Ваш торт готовий до видачі 🎉")
         admin_confirm = f"✅ Статус №{oid} → Готово до видачі"
         db_update_status(oid, "done")
