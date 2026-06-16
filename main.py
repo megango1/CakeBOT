@@ -570,8 +570,8 @@ def handle_repeat(call):
         oid = db_save_order(chat_id, orig["client_name"], orig["phone"],
                             orig["filling"], orig["kg"], orig["description"])
         bot.send_message(ADMIN_ID,
-            f"📦 НОВЕ ЗАМОВЛЕННЯ:\n\n"
-            f"👤 {orig['client_name']}\n📞 {orig['phone']}\n"
+            f"📦 НОВЕ ЗАМОВЛЕННЯ _(повтор)_:\n\n"
+            f"👤 {orig['client_name']} `(id: {chat_id})`\n📞 {orig['phone']}\n"
             f"🍰 {orig['filling']}\n⚖️ {orig['kg']} кг\n✏️ {orig['description']}\n📎 Медіа: немає",
             parse_mode="Markdown", reply_markup=build_admin_markup(oid))
         bot.answer_callback_query(call.id, "✅ Замовлення створено!")
@@ -1020,7 +1020,7 @@ def receive_client_question(message):
     admin_markup = types.InlineKeyboardMarkup()
     admin_markup.add(types.InlineKeyboardButton("✏️ Відповісти", callback_data=f"ans_{qid}"))
     bot.send_message(ADMIN_ID,
-        f"❓ *Нове питання #{qid}*\n\n👤 {client_name} (id: {client_id})\n\n📝 {message.text}",
+        f"❓ *Нове питання #{qid}*\n\n👤 {client_name} `(id: {client_id})`\n\n📝 {message.text}",
         parse_mode="Markdown", reply_markup=admin_markup)
     bot.send_message(message.chat.id, "✅ Ваше питання надіслано! Ми відповімо вам у цьому чаті.",
         reply_markup=main_keyboard())
@@ -1220,10 +1220,10 @@ def handle_order_confirm(call):
                         data.get("filling","—"), data.get("kg","—"), data.get("description","—"))
     bot.send_message(ADMIN_ID,
         f"📦 НОВЕ ЗАМОВЛЕННЯ #{oid}:\n\n"
-        f"👤 {data.get('name','—')}\n📞 {data.get('phone','—')}\n"
+        f"👤 {data.get('name','—')} `(id: {chat_id})`\n📞 {data.get('phone','—')}\n"
         f"🍰 {data.get('filling','—')}\n⚖️ {data.get('kg','—')} кг\n"
         f"✏️ {data.get('description','—')}\n📎 Медіа: {len(media_list)} шт.",
-        reply_markup=build_admin_markup(oid))
+        parse_mode="Markdown", reply_markup=build_admin_markup(oid))
     for item in media_list:
         if item["type"] == "photo":
             bot.send_photo(ADMIN_ID, item["file_id"])
