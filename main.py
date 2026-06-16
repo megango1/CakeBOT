@@ -405,7 +405,8 @@ def cakes_keyboard():
 def fillings_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
     for f in db_get_fillings():
-        markup.add(types.InlineKeyboardButton(f["name"], callback_data=f"fill_{f['name']}"))
+        label = f"{f['name']} — {f['price']} грн/кг"
+        markup.add(types.InlineKeyboardButton(label, callback_data=f"fill_{f['name']}"))
     markup.add(types.InlineKeyboardButton("❌ Скасувати замовлення", callback_data="order_cancel"))
     return markup
 
