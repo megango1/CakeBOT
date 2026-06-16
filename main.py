@@ -1220,7 +1220,7 @@ def handle_order_confirm(call):
                         data.get("filling","—"), data.get("kg","—"), data.get("description","—"))
     bot.send_message(ADMIN_ID,
         f"📦 НОВЕ ЗАМОВЛЕННЯ #{oid}:\n\n"
-        f"👤 {data.get('name','—')}\n📞 {data.get('phone','—')}\n"
+        f"👤 {data.get('name','—')}  `(id: {chat_id})`\n📞 {data.get('phone','—')}\n"
         f"🍰 {data.get('filling','—')}\n⚖️ {data.get('kg','—')} кг\n"
         f"✏️ {data.get('description','—')}\n📎 Медіа: {len(media_list)} шт.",
         reply_markup=build_admin_markup(oid))
@@ -1486,4 +1486,4 @@ if __name__ == "__main__":
     print("🔗 Підключення до Supabase...")
     db_init_faq()
     print("✅ Бот запущено! База — Supabase (REST API)")
-    bot.polling(none_stop=True)
+
