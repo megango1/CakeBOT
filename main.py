@@ -1,24 +1,22 @@
 import io
 import os
+import psycopg2
+import psycopg2.extras
 import telebot
 from telebot import types
 from openpyxl import Workbook
 from openpyxl.styles import Font, PatternFill, Alignment
-from openpyxl.cell.cell import Cell as _XLCell
 from datetime import datetime
 from collections import Counter
-from supabase import create_client, Client
 
-TOKEN = os.environ.get("TOKEN")
-SUPABASE_URL = os.environ.get("SUPABASE_URL")
-SUPABASE_KEY = os.environ.get("SUPABASE_KEY")
+TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+DATABASE_URL = os.environ.get("DATABASE_URL")
+if not TOKEN:
+    raise RuntimeError("TELEGRAM_BOT_TOKEN не знайдено в змінних середовища")
+if not DATABASE_URL:
+    raise RuntimeError("DATABASE_URL не знайдено в змінних середовища")
 
-if not SUPABASE_KEY:
-    raise RuntimeError("SUPABASE_KEY не знайдено в змінних середовища")
-
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 bot = telebot.TeleBot(TOKEN)
-
 ADMIN_ID = 1030723047
 MEDIA_STATE = "waiting_media"
 
@@ -27,167 +25,281 @@ admin_state = {}
 questions_store = {}
 question_counter = 0
 
-# ── DB helpers ─────────────────────────────────────────────────────────────────
+# ── DB connection ──────────────────────────────────────────────────────────────
 
-def _one(table: str, match: dict):
-    q = supabase.table(table).select("*")
-    for k, v in match.items():
-        q = q.eq(k, v)
-    r = q.limit(1).execute()
-    return r.data[0] if r.data else None
+def get_db():
+    return psycopg2.connect(DATABASE_URL, cursor_factory=psycopg2.extras.RealDictCursor)
 
-def _all(table: str, order: str = "created_at", desc: bool = True, limit: int = 500):
-    q = supabase.table(table).select("*").order(order, desc=desc).limit(limit)
-    return q.execute().data
+# ── DB init ────────────────────────────────────────────────────────────────────
 
-def _count(table: str, filters: dict | None = None):
-    q = supabase.table(table).select("*", count="exact")
-    if filters:
-        for k, v in filters.items():
-            q = q.eq(k, v)
-    r = q.execute()
-    return r.count or 0
-
-def _insert(table: str, data: dict):
-    return supabase.table(table).insert(data).execute().data[0]
-
-def _update(table: str, match: dict, data: dict):
-    q = supabase.table(table).update(data)
-    for k, v in match.items():
-        q = q.eq(k, v)
-    q.execute()
-
-def _delete(table: str, match: dict):
-    q = supabase.table(table).delete()
-    for k, v in match.items():
-        q = q.eq(k, v)
-    q.execute()
+def db_init():
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS orders (
+                    id SERIAL PRIMARY KEY,
+                    client_id BIGINT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    phone TEXT NOT NULL,
+                    filling TEXT NOT NULL,
+                    kg TEXT NOT NULL,
+                    description TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'new',
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS faq (
+                    id SERIAL PRIMARY KEY,
+                    question TEXT NOT NULL,
+                    answer TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS reviews (
+                    id SERIAL PRIMARY KEY,
+                    order_id INTEGER NOT NULL,
+                    client_id BIGINT NOT NULL,
+                    client_name TEXT NOT NULL,
+                    rating INTEGER NOT NULL,
+                    comment TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS gallery (
+                    id SERIAL PRIMARY KEY,
+                    file_id TEXT NOT NULL,
+                    caption TEXT,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS blocked_users (
+                    id SERIAL PRIMARY KEY,
+                    client_id BIGINT UNIQUE NOT NULL,
+                    client_name TEXT,
+                    blocked_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS templates (
+                    id SERIAL PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    text TEXT NOT NULL,
+                    created_at TIMESTAMP DEFAULT NOW()
+                )
+            """)
+            conn.commit()
+            # Seed FAQ if empty
+            cur.execute("SELECT COUNT(*) AS cnt FROM faq")
+            if cur.fetchone()["cnt"] == 0:
+                for q, a in INITIAL_FAQ:
+                    cur.execute("INSERT INTO faq (question, answer) VALUES (%s, %s)", (q, a))
+                conn.commit()
 
 # ── Orders ─────────────────────────────────────────────────────────────────────
 
 def db_save_order(client_id, name, phone, filling, kg, description):
-    row = _insert("orders", {
-        "client_id": client_id, "client_name": name, "phone": phone,
-        "filling": filling, "kg": kg, "description": description, "status": "new",
-    })
-    return row["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO orders (client_id, client_name, phone, filling, kg, description, status)
+                   VALUES (%s, %s, %s, %s, %s, %s, 'new') RETURNING id""",
+                (client_id, name, phone, filling, kg, description)
+            )
+            row = cur.fetchone()
+            conn.commit()
+            return row["id"]
 
 def db_get_order(order_id):
-    return _one("orders", {"id": order_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders WHERE id = %s", (order_id,))
+            return cur.fetchone()
 
 def db_update_status(order_id, status):
-    _update("orders", {"id": order_id}, {"status": status})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE orders SET status = %s WHERE id = %s", (status, order_id))
+            conn.commit()
 
 def db_get_all_orders(limit=20):
-    return _all("orders", limit=limit)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders ORDER BY created_at DESC LIMIT %s", (limit,))
+            return cur.fetchall()
 
 def db_delete_order(order_id):
-    _delete("orders", {"id": order_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM orders WHERE id = %s", (order_id,))
+            conn.commit()
 
 def db_search_orders(query):
     like = f"%{query}%"
-    r = supabase.table("orders").select("*") \
-        .or_(f"client_name.ilike.{like},phone.ilike.{like}") \
-        .order("created_at", desc=True).limit(20).execute()
-    return r.data
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """SELECT * FROM orders
+                   WHERE client_name ILIKE %s OR phone ILIKE %s
+                   ORDER BY created_at DESC LIMIT 20""",
+                (like, like)
+            )
+            return cur.fetchall()
 
 def db_get_client_orders(client_id):
-    r = supabase.table("orders").select("*") \
-        .eq("client_id", client_id).order("created_at", desc=True).execute()
-    return r.data
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM orders WHERE client_id = %s ORDER BY created_at DESC", (client_id,))
+            return cur.fetchall()
 
 def db_get_last_client_order(client_id):
-    r = supabase.table("orders").select("*") \
-        .eq("client_id", client_id).order("created_at", desc=True).limit(1).execute()
-    return r.data[0] if r.data else None
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM orders WHERE client_id = %s ORDER BY created_at DESC LIMIT 1",
+                (client_id,)
+            )
+            return cur.fetchone()
 
 def db_get_all_client_ids():
-    r = supabase.table("orders").select("client_id").execute()
-    seen = set()
-    result = []
-    for row in r.data:
-        cid = row["client_id"]
-        if cid not in seen:
-            seen.add(cid)
-            result.append(cid)
-    return result
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT client_id FROM orders")
+            return [row["client_id"] for row in cur.fetchall()]
 
 def db_get_stats():
-    now = datetime.now()
-    month_start = now.strftime("%Y-%m-01")
-    total = _count("orders")
-    r_month = supabase.table("orders").select("id", count="exact") \
-        .gte("created_at", month_start).execute()
-    month = r_month.count or 0
-    done = _count("orders", {"status": "done"})
-    r_active = supabase.table("orders").select("id", count="exact") \
-        .in_("status", ["new", "work"]).execute()
-    active = r_active.count or 0
-    r_fill = supabase.table("orders").select("filling") \
-        .neq("status", "rejected").execute()
-    fillings = [row["filling"] for row in r_fill.data]
-    r_clients = supabase.table("orders").select("client_id").execute()
-    clients = len({row["client_id"] for row in r_clients.data})
-    return {"total": total, "month": month, "done": done,
-            "active": active, "fillings": fillings, "clients": clients}
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            now = datetime.now()
+            month_start = now.strftime("%Y-%m-01")
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM orders")
+            total = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM orders WHERE created_at >= %s", (month_start,))
+            month = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM orders WHERE status = 'done'")
+            done = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM orders WHERE status IN ('new','work')")
+            active = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT filling FROM orders WHERE status != 'rejected'")
+            fillings = [row["filling"] for row in cur.fetchall()]
+
+            cur.execute("SELECT COUNT(DISTINCT client_id) AS cnt FROM orders")
+            clients = cur.fetchone()["cnt"]
+
+            return {"total": total, "month": month, "done": done,
+                    "active": active, "fillings": fillings, "clients": clients}
 
 # ── Reviews ────────────────────────────────────────────────────────────────────
 
 def db_save_review(order_id, client_id, client_name, rating, comment):
-    _insert("reviews", {
-        "order_id": order_id, "client_id": client_id,
-        "client_name": client_name, "rating": rating, "comment": comment,
-    })
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO reviews (order_id, client_id, client_name, rating, comment) VALUES (%s,%s,%s,%s,%s)",
+                (order_id, client_id, client_name, rating, comment)
+            )
+            conn.commit()
 
 def db_get_all_reviews():
-    return _all("reviews")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM reviews ORDER BY created_at DESC")
+            return cur.fetchall()
 
 def db_review_exists(order_id):
-    return _count("reviews", {"order_id": order_id}) > 0
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM reviews WHERE order_id = %s", (order_id,))
+            return cur.fetchone()["cnt"] > 0
 
 # ── Gallery ────────────────────────────────────────────────────────────────────
 
 def db_add_gallery(file_id, caption):
-    row = _insert("gallery", {"file_id": file_id, "caption": caption})
-    return row["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO gallery (file_id, caption) VALUES (%s,%s) RETURNING id", (file_id, caption))
+            row = cur.fetchone()
+            conn.commit()
+            return row["id"]
 
 def db_get_gallery():
-    return _all("gallery")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM gallery ORDER BY created_at ASC")
+            return cur.fetchall()
 
 def db_delete_gallery(photo_id):
-    _delete("gallery", {"id": photo_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM gallery WHERE id = %s", (photo_id,))
+            conn.commit()
 
 # ── Blocked users ──────────────────────────────────────────────────────────────
 
 def db_block_user(client_id, client_name):
-    supabase.table("blocked_users").upsert(
-        {"client_id": client_id, "client_name": client_name},
-        on_conflict="client_id"
-    ).execute()
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO blocked_users (client_id, client_name)
+                   VALUES (%s, %s)
+                   ON CONFLICT (client_id) DO UPDATE SET client_name = EXCLUDED.client_name""",
+                (client_id, client_name)
+            )
+            conn.commit()
 
 def db_unblock_user(client_id):
-    _delete("blocked_users", {"client_id": client_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM blocked_users WHERE client_id = %s", (client_id,))
+            conn.commit()
 
 def db_is_blocked(client_id):
-    return _count("blocked_users", {"client_id": client_id}) > 0
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM blocked_users WHERE client_id = %s", (client_id,))
+            return cur.fetchone()["cnt"] > 0
 
 def db_get_blocked():
-    return _all("blocked_users", order="blocked_at")
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM blocked_users ORDER BY blocked_at DESC")
+            return cur.fetchall()
 
 # ── Templates ──────────────────────────────────────────────────────────────────
 
 def db_add_template(title, text):
-    row = _insert("templates", {"title": title, "text": text})
-    return row["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO templates (title, text) VALUES (%s,%s) RETURNING id", (title, text))
+            row = cur.fetchone()
+            conn.commit()
+            return row["id"]
 
 def db_get_templates():
-    return _all("templates", order="id", desc=False)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM templates ORDER BY id ASC")
+            return cur.fetchall()
 
 def db_get_template(template_id):
-    return _one("templates", {"id": template_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM templates WHERE id = %s", (template_id,))
+            return cur.fetchone()
 
 def db_delete_template(template_id):
-    _delete("templates", {"id": template_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM templates WHERE id = %s", (template_id,))
+            conn.commit()
 
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
@@ -206,37 +318,33 @@ INITIAL_FAQ = [
      "Так, ми можемо адаптувати рецепт. Вкажіть побажання в описі або напишіть нам окремо."),
 ]
 
-def db_init_faq():
-    if _count("faq") == 0:
-        for q, a in INITIAL_FAQ:
-            _insert("faq", {"question": q, "answer": a})
-
 def db_get_faq():
-    return _all("faq", order="id", desc=False)
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM faq ORDER BY id")
+            return cur.fetchall()
 
 def db_get_faq_item(faq_id):
-    return _one("faq", {"id": faq_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT * FROM faq WHERE id = %s", (faq_id,))
+            return cur.fetchone()
 
 def db_add_faq(question, answer):
-    row = _insert("faq", {"question": question, "answer": answer})
-    return row["id"]
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO faq (question, answer) VALUES (%s,%s) RETURNING id", (question, answer))
+            row = cur.fetchone()
+            conn.commit()
+            return row["id"]
 
 def db_delete_faq(faq_id):
-    _delete("faq", {"id": faq_id})
+    with get_db() as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM faq WHERE id = %s", (faq_id,))
+            conn.commit()
 
-# ── Helpers ────────────────────────────────────────────────────────────────────
-
-def parse_created_at(value):
-    if not value:
-        return None
-    if isinstance(value, datetime):
-        return value
-    for fmt in ("%Y-%m-%dT%H:%M:%S.%f", "%Y-%m-%dT%H:%M:%S", "%Y-%m-%d %H:%M:%S"):
-        try:
-            return datetime.strptime(value[:19], fmt[:len(fmt)])
-        except ValueError:
-            continue
-    return None
+# ── Constants ──────────────────────────────────────────────────────────────────
 
 STATUS_LABELS = {
     "new":      "🆕 Нове",
@@ -258,22 +366,45 @@ CAKE_PRICES = {
     "Трюфель":                  1500,
 }
 
+CAKES = {
+    "Бісквіт з фруктами":      "🍰 Бісквіт + крем + фрукти\n💰 1200 грн/кг",
+    "Полуничне тірамісу":       "🍓 Маскарпоне + полуниця\n💰 1200 грн/кг",
+    "Вишня-шоколад":            "🍒 Шоколад + вишня\n💰 1300 грн/кг",
+    "Лісові ягоди":             "🫐 Ягідний мікс\n💰 1300 грн/кг",
+    "Манго-маракуя":            "🥭 Тропічний смак\n💰 1400 грн/кг",
+    "Горіхова карамель-банан":  "🍌 Карамель + банан\n💰 1400 грн/кг",
+    "Орео":                     "🍪 Крем + Oreo\n💰 1400 грн/кг",
+    "Фісташка-малина":          "🌿 Фісташка + малина\n💰 1500 грн/кг",
+    "Ферреро Роше":             "🍫 Шоколад + горіх\n💰 1500 грн/кг",
+    "Трюфель":                  "🍫 Шоколадний трюфель\n💰 1500 грн/кг",
+}
+
+CAKE_PHOTOS = {
+    "Бісквіт з фруктами":      "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=600",
+    "Полуничне тірамісу":       "https://images.unsplash.com/photo-1571877227200-a0d98ea607e9?w=600",
+    "Вишня-шоколад":            "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=600",
+    "Лісові ягоди":             "https://images.unsplash.com/photo-1488477181946-6428a0291777?w=600",
+    "Манго-маракуя":            "https://images.unsplash.com/photo-1519869325930-281384150729?w=600",
+    "Горіхова карамель-банан":  "https://images.unsplash.com/photo-1586985289688-ca3cf47d3e6e?w=600",
+    "Орео":                     "https://images.unsplash.com/photo-1606890737304-57a1ca8a5b62?w=600",
+    "Фісташка-малина":          "https://images.unsplash.com/photo-1562440499-64c9a111f713?w=600",
+    "Ферреро Роше":             "https://images.unsplash.com/photo-1599785209707-a456fc1337bb?w=600",
+    "Трюфель":                  "https://images.unsplash.com/photo-1611293388250-580b08c4a145?w=600",
+}
+
+VICTORIA_GARDENS_LAT = 49.81858
+VICTORIA_GARDENS_LON = 23.97621
+
+# ── Helpers ────────────────────────────────────────────────────────────────────
+
 def is_blocked_user(message):
     if message.chat.id == ADMIN_ID:
         return False
     return db_is_blocked(message.chat.id)
 
-def faq_keyboard():
-    markup = types.InlineKeyboardMarkup()
-    for row in db_get_faq():
-        markup.add(types.InlineKeyboardButton(row["question"], callback_data=f"faqdb_{row['id']}"))
-    markup.add(types.InlineKeyboardButton("✍️ Задати своє питання", callback_data="ask_question"))
-    return markup
-
 def format_order_text(o):
     status_label = STATUS_LABELS.get(o["status"], o["status"])
-    dt = parse_created_at(o.get("created_at"))
-    created = dt.strftime("%d.%m.%Y %H:%M") if dt else "—"
+    created = o["created_at"].strftime("%d.%m.%Y %H:%M") if o["created_at"] else "—"
     return (
         f"📦 *Замовлення #{o['id']}*\n"
         f"📅 {created}\n"
@@ -285,55 +416,7 @@ def format_order_text(o):
         f"📊 Статус: {status_label}"
     )
 
-def build_admin_markup(oid, _phone=None):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("🔧 Прийнято в роботу", callback_data=f"st_work_{oid}"),
-        types.InlineKeyboardButton("🎂 Готово до видачі",  callback_data=f"st_done_{oid}"),
-    )
-    markup.add(
-        types.InlineKeyboardButton("❌ Відхилити",         callback_data=f"st_reject_{oid}"),
-        types.InlineKeyboardButton("✉️ Написати клієнту", callback_data=f"write_{oid}"),
-    )
-    markup.add(types.InlineKeyboardButton("🗑️ Видалити замовлення", callback_data=f"del_{oid}"))
-    return markup
-
-def build_delete_confirm_markup(oid):
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("✅ Так, видалити", callback_data=f"del_yes_{oid}"),
-        types.InlineKeyboardButton("❌ Скасувати",     callback_data=f"del_no_{oid}"),
-    )
-    return markup
-
-def rating_keyboard(order_id):
-    markup = types.InlineKeyboardMarkup(row_width=5)
-    markup.add(
-        types.InlineKeyboardButton("1 ⭐", callback_data=f"rate_{order_id}_1"),
-        types.InlineKeyboardButton("2 ⭐", callback_data=f"rate_{order_id}_2"),
-        types.InlineKeyboardButton("3 ⭐", callback_data=f"rate_{order_id}_3"),
-        types.InlineKeyboardButton("4 ⭐", callback_data=f"rate_{order_id}_4"),
-        types.InlineKeyboardButton("5 ⭐", callback_data=f"rate_{order_id}_5"),
-    )
-    return markup
-
-def gallery_nav_markup(index, total, _photo_id=None):
-    markup = types.InlineKeyboardMarkup(row_width=3)
-    buttons = []
-    if index > 0:
-        buttons.append(types.InlineKeyboardButton("⬅️", callback_data=f"gal_{index - 1}"))
-    buttons.append(types.InlineKeyboardButton(f"{index + 1}/{total}", callback_data="gal_noop"))
-    if index < total - 1:
-        buttons.append(types.InlineKeyboardButton("➡️", callback_data=f"gal_{index + 1}"))
-    markup.add(*buttons)
-    return markup
-
-def templates_keyboard():
-    markup = types.InlineKeyboardMarkup()
-    for t in db_get_templates():
-        markup.add(types.InlineKeyboardButton(t["title"], callback_data=f"tpl_{t['id']}"))
-    markup.add(types.InlineKeyboardButton("➕ Новий шаблон", callback_data="tpl_new"))
-    return markup
+# ── Keyboards ──────────────────────────────────────────────────────────────────
 
 def main_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -361,59 +444,90 @@ def done_keyboard():
 def cakes_keyboard():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     markup.add(
-        "Бісквіт з фруктами",    "Полуничне тірамісу",
-        "Вишня-шоколад",          "Лісові ягоди",
-        "Манго-маракуя",          "Горіхова карамель-банан",
-        "Орео",                   "Фісташка-малина",
-        "Ферреро Роше",           "Трюфель",
+        "Бісквіт з фруктами", "Полуничне тірамісу",
+        "Вишня-шоколад", "Лісові ягоди",
+        "Манго-маракуя", "Горіхова карамель-банан",
+        "Орео", "Фісташка-малина",
+        "Ферреро Роше", "Трюфель",
         "🔙 Назад"
     )
     return markup
 
 def fillings_inline():
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    buttons = [
-        types.InlineKeyboardButton("🍰 Бісквіт з фруктами",     callback_data="fill_Бісквіт з фруктами"),
-        types.InlineKeyboardButton("🍓 Полуничне тірамісу",      callback_data="fill_Полуничне тірамісу"),
-        types.InlineKeyboardButton("🍒 Вишня-шоколад",           callback_data="fill_Вишня-шоколад"),
-        types.InlineKeyboardButton("🫐 Лісові ягоди",            callback_data="fill_Лісові ягоди"),
-        types.InlineKeyboardButton("🥭 Манго-маракуя",           callback_data="fill_Манго-маракуя"),
-        types.InlineKeyboardButton("🍌 Горіхова карамель-банан", callback_data="fill_Горіхова карамель-банан"),
-        types.InlineKeyboardButton("🍪 Орео",                    callback_data="fill_Орео"),
-        types.InlineKeyboardButton("🌿 Фісташка-малина",         callback_data="fill_Фісташка-малина"),
-        types.InlineKeyboardButton("🍫 Ферреро Роше",            callback_data="fill_Ферреро Роше"),
-        types.InlineKeyboardButton("🍫 Трюфель",                 callback_data="fill_Трюфель"),
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    fillings = [
+        ("🍰 Бісквіт з фруктами",      "fill_Бісквіт з фруктами"),
+        ("🍓 Полуничне тірамісу",       "fill_Полуничне тірамісу"),
+        ("🍒 Вишня-шоколад",            "fill_Вишня-шоколад"),
+        ("🫐 Лісові ягоди",             "fill_Лісові ягоди"),
+        ("🥭 Манго-маракуя",            "fill_Манго-маракуя"),
+        ("🍌 Горіхова карамель-банан",  "fill_Горіхова карамель-банан"),
+        ("🍪 Орео",                     "fill_Орео"),
+        ("🌿 Фісташка-малина",          "fill_Фісташка-малина"),
+        ("🍫 Ферреро Роше",             "fill_Ферреро Роше"),
+        ("🍫 Трюфель",                  "fill_Трюфель"),
     ]
-    markup.add(*buttons)
+    for label, data in fillings:
+        markup.add(types.InlineKeyboardButton(label, callback_data=data))
     markup.add(types.InlineKeyboardButton("❌ Скасувати замовлення", callback_data="order_cancel"))
     return markup
 
-CAKES = {
-    "Бісківіт з фруктами":     "🍰 Бісквіт + крем + фрукти\n💰 1200 грн/кг",
-    "Бісквіт з фруктами":      "🍰 Бісквіт + крем + фрукти\n💰 1200 грн/кг",
-    "Полуничне тірамісу":       "🍓 Маскарпоне + полуниця\n💰 1200 грн/кг",
-    "Вишня-шоколад":            "🍒 Шоколад + вишня\n💰 1300 грн/кг",
-    "Лісові ягоди":             "🫐 Ягідний мікс\n💰 1300 грн/кг",
-    "Манго-маракуя":            "🥭 Тропічний смак\n💰 1400 грн/кг",
-    "Горіхова карамель-банан":  "🍌 Карамель + банан\n💰 1400 грн/кг",
-    "Орео":                     "🍪 Крем + Oreo\n💰 1400 грн/кг",
-    "Фісташка-малина":          "🌿 Фісташка + малина\n💰 1500 грн/кг",
-    "Ферреро Роше":             "🍫 Шоколад + горіх\n💰 1500 грн/кг",
-    "Трюфель":                  "🍫 Шоколадний трюфель\n💰 1500 грн/кг",
-}
+def faq_keyboard():
+    markup = types.InlineKeyboardMarkup()
+    for row in db_get_faq():
+        markup.add(types.InlineKeyboardButton(row["question"], callback_data=f"faqdb_{row['id']}"))
+    markup.add(types.InlineKeyboardButton("✍️ Задати своє питання", callback_data="ask_question"))
+    return markup
 
-CAKE_PHOTOS = {
-    "Бісквіт з фруктами":      "https://images.unsplash.com/photo-1565958011703-44f9829ba187?w=600",
-    "Полуничне тірамісу":       "https://images.unsplash.com/photo-1571877227200-a0d98ea607e9?w=600",
-    "Вишня-шоколад":            "https://images.unsplash.com/photo-1578985545062-69928b1d9587?w=600",
-    "Лісові ягоди":             "https://images.unsplash.com/photo-1488477181946-6428a0291777?w=600",
-    "Манго-маракуя":            "https://images.unsplash.com/photo-1519869325930-281384150729?w=600",
-    "Горіхова карамель-банан":  "https://images.unsplash.com/photo-1586985289688-ca3cf47d3e6e?w=600",
-    "Орео":                     "https://images.unsplash.com/photo-1606890737304-57a1ca8a5b62?w=600",
-    "Фісташка-малина":          "https://images.unsplash.com/photo-1562440499-64c9a111f713?w=600",
-    "Ферреро Роше":             "https://images.unsplash.com/photo-1599785209707-a456fc1337bb?w=600",
-    "Трюфель":                  "https://images.unsplash.com/photo-1611293388250-580b08c4a145?w=600",
-}
+def build_admin_markup(oid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🔧 Прийнято в роботу", callback_data=f"st_work_{oid}"),
+        types.InlineKeyboardButton("🎂 Готово до видачі",  callback_data=f"st_done_{oid}"),
+    )
+    markup.add(
+        types.InlineKeyboardButton("❌ Відхилити",          callback_data=f"st_reject_{oid}"),
+        types.InlineKeyboardButton("✉️ Написати клієнту",  callback_data=f"write_{oid}"),
+    )
+    markup.add(types.InlineKeyboardButton("🗑️ Видалити замовлення", callback_data=f"del_{oid}"))
+    return markup
+
+def build_delete_confirm_markup(oid):
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("✅ Так, видалити", callback_data=f"del_yes_{oid}"),
+        types.InlineKeyboardButton("❌ Скасувати",     callback_data=f"del_no_{oid}"),
+    )
+    return markup
+
+def rating_keyboard(order_id):
+    markup = types.InlineKeyboardMarkup(row_width=5)
+    markup.add(
+        types.InlineKeyboardButton("1 ⭐", callback_data=f"rate_{order_id}_1"),
+        types.InlineKeyboardButton("2 ⭐", callback_data=f"rate_{order_id}_2"),
+        types.InlineKeyboardButton("3 ⭐", callback_data=f"rate_{order_id}_3"),
+        types.InlineKeyboardButton("4 ⭐", callback_data=f"rate_{order_id}_4"),
+        types.InlineKeyboardButton("5 ⭐", callback_data=f"rate_{order_id}_5"),
+    )
+    return markup
+
+def gallery_nav_markup(index, total):
+    markup = types.InlineKeyboardMarkup(row_width=3)
+    buttons = []
+    if index > 0:
+        buttons.append(types.InlineKeyboardButton("⬅️", callback_data=f"gal_{index - 1}"))
+    buttons.append(types.InlineKeyboardButton(f"{index + 1}/{total}", callback_data="gal_noop"))
+    if index < total - 1:
+        buttons.append(types.InlineKeyboardButton("➡️", callback_data=f"gal_{index + 1}"))
+    markup.add(*buttons)
+    return markup
+
+def templates_keyboard():
+    markup = types.InlineKeyboardMarkup()
+    for t in db_get_templates():
+        markup.add(types.InlineKeyboardButton(t["title"], callback_data=f"tpl_{t['id']}"))
+    markup.add(types.InlineKeyboardButton("➕ Новий шаблон", callback_data="tpl_new"))
+    return markup
 
 # ── /start ─────────────────────────────────────────────────────────────────────
 
@@ -523,8 +637,7 @@ def client_mystatus(message):
         parse_mode="Markdown")
     for o in orders[:5]:
         status_label = STATUS_LABELS.get(o["status"], o["status"])
-        dt = parse_created_at(o.get("created_at"))
-        date_str = dt.strftime("%d.%m.%Y") if dt else "—"
+        date_str = o["created_at"].strftime("%d.%m.%Y") if o["created_at"] else "—"
         bot.send_message(message.chat.id,
             f"📦 *Замовлення #{o['id']}*\n📅 {date_str}\n🍰 {o['filling']} — {o['kg']} кг\n📊 {status_label}",
             parse_mode="Markdown")
@@ -541,8 +654,7 @@ def client_repeat(message):
             "📭 У вас ще немає замовлень для повторення.\n\nНатисніть «🍰 Замовити торт» 🎂",
             reply_markup=main_keyboard())
         return
-    dt = parse_created_at(last.get("created_at"))
-    date_str = dt.strftime("%d.%m.%Y") if dt else "—"
+    date_str = last["created_at"].strftime("%d.%m.%Y") if last["created_at"] else "—"
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(
         types.InlineKeyboardButton("✅ Так, повторити", callback_data=f"repeat_yes_{last['id']}"),
@@ -570,14 +682,14 @@ def handle_repeat(call):
         oid = db_save_order(chat_id, orig["client_name"], orig["phone"],
                             orig["filling"], orig["kg"], orig["description"])
         bot.send_message(ADMIN_ID,
-            f"📦 НОВЕ ЗАМОВЛЕННЯ _(повтор)_:\n\n"
-            f"👤 {orig['client_name']} `(id: {chat_id})`\n📞 {orig['phone']}\n"
+            f"📦 НОВЕ ЗАМОВЛЕННЯ _(повтор)_ #{oid}:\n\n"
+            f"👤 {orig['client_name']} (id: {chat_id})\n📞 {orig['phone']}\n"
             f"🍰 {orig['filling']}\n⚖️ {orig['kg']} кг\n✏️ {orig['description']}\n📎 Медіа: немає",
             parse_mode="Markdown", reply_markup=build_admin_markup(oid))
         bot.answer_callback_query(call.id, "✅ Замовлення створено!")
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id, reply_markup=None)
         bot.send_message(chat_id,
-            f"✅ *Замовлення створено!*\n\nМи зв'яжемось з вами найближчим часом 😊",
+            f"✅ *Замовлення #{oid} створено!*\n\nМи зв'яжемось з вами найближчим часом 😊",
             parse_mode="Markdown", reply_markup=main_keyboard())
 
 # ── Admin: orders ──────────────────────────────────────────────────────────────
@@ -620,8 +732,7 @@ def admin_reviews(message):
         f"⭐ *Відгуки клієнтів*\n\nВсього: {len(reviews)} | Середня оцінка: {avg:.1f} ⭐",
         parse_mode="Markdown")
     for r in reviews:
-        dt = parse_created_at(r.get("created_at"))
-        date_str = dt.strftime("%d.%m.%Y") if dt else "—"
+        date_str = r["created_at"].strftime("%d.%m.%Y") if r["created_at"] else "—"
         stars = "⭐" * r["rating"]
         comment = f"\n💬 _{r['comment']}_" if r.get("comment") else ""
         bot.send_message(message.chat.id,
@@ -679,8 +790,7 @@ def admin_blocked_list(message):
         return
     lines = ["🚫 *Заблоковані клієнти:*\n"]
     for u in blocked:
-        dt = parse_created_at(u.get("blocked_at"))
-        date_str = dt.strftime("%d.%m.%Y") if dt else "—"
+        date_str = u["blocked_at"].strftime("%d.%m.%Y") if u["blocked_at"] else "—"
         lines.append(f"• `{u['client_id']}` — {u.get('client_name','')} _(з {date_str})_")
     bot.send_message(message.chat.id, "\n".join(lines), parse_mode="Markdown")
 
@@ -717,7 +827,7 @@ def tpl_new_start(call):
         "💬 *Новий шаблон*\n\nКрок 1/2 — Введіть *назву* шаблону:",
         parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: call.data.startswith("tpl_") and call.data != "tpl_new")
+@bot.callback_query_handler(func=lambda call: call.data.startswith("tpl_") and call.data != "tpl_new" and not call.data.startswith("tpldel_"))
 def handle_template_send(call):
     if call.message.chat.id != ADMIN_ID:
         return
@@ -844,7 +954,7 @@ def gallery_menu(message):
             parse_mode="Markdown")
         return
     p = photos[0]
-    markup = gallery_nav_markup(0, len(photos), p["id"])
+    markup = gallery_nav_markup(0, len(photos))
     bot.send_photo(message.chat.id, p["file_id"],
         caption=p.get("caption") or "Наша робота 🎂", reply_markup=markup)
 
@@ -860,7 +970,7 @@ def gallery_navigate(call):
         return
     bot.answer_callback_query(call.id)
     p = photos[index]
-    markup = gallery_nav_markup(index, len(photos), p["id"])
+    markup = gallery_nav_markup(index, len(photos))
     try:
         bot.edit_message_media(
             media=types.InputMediaPhoto(p["file_id"], caption=p.get("caption") or "Наша робота 🎂"),
@@ -908,15 +1018,20 @@ def handle_review_comment(message):
         f"⭐ *Новий відгук!*\n\n👤 {data['client_name']}\n📦 Замовлення #{data['order_id']}\nОцінка: {stars}{comment_text}",
         parse_mode="Markdown")
 
-# ── Price / contacts ───────────────────────────────────────────────────────────
+# ── Price / Contacts ───────────────────────────────────────────────────────────
 
 @bot.message_handler(func=lambda m: m.text == "📋 Прайс")
 def price(message):
     if is_blocked_user(message):
         return
-    bot.send_message(message.chat.id,
-        "📋 Вимоги:\n\n• Мінімальне замовлення — 2 кг\n• Ціна вказана за 1 кг\n• Декор рахується окремо\n\n👇 Оберіть начинку:",
-        reply_markup=cakes_keyboard())
+    text = (
+        "📋 Вимоги:\n\n"
+        "• Мінімальне замовлення — 2 кг\n"
+        "• Ціна вказана за 1 кг\n"
+        "• Декор рахується окремо\n\n"
+        "👇 Оберіть начинку:"
+    )
+    bot.send_message(message.chat.id, text, reply_markup=cakes_keyboard())
 
 @bot.message_handler(func=lambda m: m.text in CAKES)
 def cake_info(message):
@@ -934,9 +1049,6 @@ def back(message):
     if is_blocked_user(message):
         return
     bot.send_message(message.chat.id, "Головне меню:", reply_markup=main_keyboard())
-
-VICTORIA_GARDENS_LAT = 49.81858
-VICTORIA_GARDENS_LON = 23.97621
 
 @bot.message_handler(func=lambda m: m.text == "📞 Контакти")
 def contacts(message):
@@ -987,14 +1099,16 @@ def faq_answer(call):
     bot.answer_callback_query(call.id)
     back_markup = types.InlineKeyboardMarkup()
     back_markup.add(types.InlineKeyboardButton("⬅️ Назад до питань", callback_data="faq_back"))
-    bot.edit_message_text(f"❓ *{row['question']}*\n\n{row['answer']}",
+    bot.edit_message_text(
+        f"❓ *{row['question']}*\n\n{row['answer']}",
         chat_id=call.message.chat.id, message_id=call.message.message_id,
         parse_mode="Markdown", reply_markup=back_markup)
 
 @bot.callback_query_handler(func=lambda call: call.data == "faq_back")
 def faq_back(call):
     bot.answer_callback_query(call.id)
-    bot.edit_message_text("❓ *Часті питання*\n\nОберіть питання або задайте своє 👇",
+    bot.edit_message_text(
+        "❓ *Часті питання*\n\nОберіть питання або задайте своє 👇",
         chat_id=call.message.chat.id, message_id=call.message.message_id,
         parse_mode="Markdown", reply_markup=faq_keyboard())
 
@@ -1015,12 +1129,16 @@ def receive_client_question(message):
     qid = question_counter
     client_id = message.chat.id
     client_name = message.from_user.first_name or "Клієнт"
-    questions_store[qid] = {"client_id": client_id, "client_name": client_name,
-                             "question": message.text, "answered": False}
+    questions_store[qid] = {
+        "client_id": client_id,
+        "client_name": client_name,
+        "question": message.text,
+        "answered": False,
+    }
     admin_markup = types.InlineKeyboardMarkup()
     admin_markup.add(types.InlineKeyboardButton("✏️ Відповісти", callback_data=f"ans_{qid}"))
     bot.send_message(ADMIN_ID,
-        f"❓ *Нове питання #{qid}*\n\n👤 {client_name} `(id: {client_id})`\n\n📝 {message.text}",
+        f"❓ *Нове питання #{qid}*\n\n👤 {client_name} (id: `{client_id}`)\n\n📝 {message.text}",
         parse_mode="Markdown", reply_markup=admin_markup)
     bot.send_message(message.chat.id, "✅ Ваше питання надіслано! Ми відповімо вам у цьому чаті.",
         reply_markup=main_keyboard())
@@ -1031,7 +1149,7 @@ def admin_add_faq(message):
         return
     admin_state[message.chat.id] = {"state": "adding_faq_q"}
     bot.send_message(message.chat.id,
-        "➕ *Додати питання в FAQ*\n\nКрок 1/2 — Введіть *текст питання*:",
+        "➕ *Додати питання в FAQ*\n\nКрок 1/2 — Введіть *текст питання*:\n_(наприклад: «💰 Яка вартість доставки?»)_",
         parse_mode="Markdown")
 
 @bot.message_handler(commands=['delfaq'])
@@ -1087,8 +1205,10 @@ def admin_answer_start(call):
         bot.answer_callback_query(call.id, "Питання не знайдено")
         return
     admin_state[call.message.chat.id] = {
-        "state": "answering", "qid": qid,
-        "client_id": q["client_id"], "client_name": q["client_name"],
+        "state": "answering",
+        "qid": qid,
+        "client_id": q["client_id"],
+        "client_name": q["client_name"],
     }
     bot.answer_callback_query(call.id)
     bot.send_message(call.message.chat.id,
@@ -1114,7 +1234,8 @@ def get_name(message):
         cancel(message)
         return
     user_data[message.chat.id] = {"name": message.text}
-    bot.send_message(message.chat.id, "Введіть номер телефону або натисніть кнопку нижче 👇",
+    bot.send_message(message.chat.id,
+        "Введіть номер телефону або натисніть кнопку нижче 👇",
         reply_markup=phone_keyboard())
     bot.register_next_step_handler(message, get_phone)
 
@@ -1140,7 +1261,8 @@ def get_filling(call):
     bot.answer_callback_query(call.id, f"✅ Обрано: {filling}")
     bot.edit_message_text(f"🎂 Начинка: *{filling}*",
         chat_id=chat_id, message_id=call.message.message_id, parse_mode="Markdown")
-    bot.send_message(chat_id, "⚖️ Введіть бажану кількість кілограмів:\n_(мінімум 2 кг)_",
+    bot.send_message(chat_id,
+        "⚖️ Введіть бажану кількість кілограмів:\n_(мінімум 2 кг)_",
         parse_mode="Markdown", reply_markup=cancel_keyboard())
     bot.register_next_step_handler(call.message, get_kg)
 
@@ -1150,7 +1272,8 @@ def get_kg(message):
         return
     user_data[message.chat.id]["kg"] = message.text
     bot.send_message(message.chat.id,
-        "✏️ *Опишіть бажаний дизайн торту:*\n\n_Наприклад: квіти з крему, напис «З Днем Народження»_",
+        "✏️ *Опишіть бажаний дизайн торту:*\n\n"
+        "_Наприклад: квіти з крему, напис «З Днем Народження», кольорова глазур тощо_",
         parse_mode="Markdown", reply_markup=cancel_keyboard())
     bot.register_next_step_handler(message, get_description)
 
@@ -1164,7 +1287,8 @@ def get_description(message):
     user_data[chat_id]["media"] = []
     bot.send_message(chat_id,
         "📸 *Надішліть фото або відео як приклад дизайну*\n\n"
-        "Можна надіслати скільки завгодно 📂\n\nКоли закінчите — натисніть *✅ Готово*",
+        "Можна надіслати скільки завгодно — по одному або альбомом 📂\n\n"
+        "Коли закінчите — натисніть *✅ Готово*",
         parse_mode="Markdown", reply_markup=done_keyboard())
 
 @bot.message_handler(
@@ -1216,13 +1340,22 @@ def handle_order_confirm(call):
         return
     data = user_data.get(chat_id, {})
     media_list = data.get("media", [])
-    oid = db_save_order(chat_id, data.get("name","—"), data.get("phone","—"),
-                        data.get("filling","—"), data.get("kg","—"), data.get("description","—"))
+    oid = db_save_order(
+        client_id=chat_id,
+        name=data.get("name", "—"),
+        phone=data.get("phone", "—"),
+        filling=data.get("filling", "—"),
+        kg=data.get("kg", "—"),
+        description=data.get("description", "—"),
+    )
     bot.send_message(ADMIN_ID,
         f"📦 НОВЕ ЗАМОВЛЕННЯ #{oid}:\n\n"
-        f"👤 {data.get('name','—')} `(id: {chat_id})`\n📞 {data.get('phone','—')}\n"
-        f"🍰 {data.get('filling','—')}\n⚖️ {data.get('kg','—')} кг\n"
-        f"✏️ {data.get('description','—')}\n📎 Медіа: {len(media_list)} шт.",
+        f"👤 {data.get('name','—')} (id: {chat_id})\n"
+        f"📞 {data.get('phone','—')}\n"
+        f"🍰 {data.get('filling','—')}\n"
+        f"⚖️ {data.get('kg','—')} кг\n"
+        f"✏️ {data.get('description','—')}\n"
+        f"📎 Медіа: {len(media_list)} шт.",
         parse_mode="Markdown", reply_markup=build_admin_markup(oid))
     for item in media_list:
         if item["type"] == "photo":
@@ -1233,7 +1366,7 @@ def handle_order_confirm(call):
     bot.answer_callback_query(call.id, "✅ Замовлення відправлено!")
     bot.edit_message_reply_markup(chat_id, call.message.message_id, reply_markup=None)
     bot.send_message(chat_id,
-        f"✅ Дякуємо! Ваше замовлення прийнято.\nМи скоро з вами зв'яжемось 😊",
+        f"✅ Дякуємо! Ваше замовлення №{oid} прийнято.\nМи скоро з вами зв'яжемось 😊",
         reply_markup=main_keyboard())
 
 # ── Status handler ─────────────────────────────────────────────────────────────
@@ -1250,18 +1383,20 @@ def handle_status(call):
     client_id = order["client_id"]
     name = order["client_name"]
     if status == "work":
-        client_msg = (f"🔧 *Замовлення прийнято в роботу!*\n\n"
-                      f"Привіт, {name}! Ваш торт вже готується 🎂")
+        client_msg = (f"🔧 *Замовлення №{oid} прийнято в роботу!*\n\n"
+                      f"Привіт, {name}! Ваш торт вже готується 🎂\n"
+                      "Ми повідомимо вас коли він буде готовий.")
         admin_confirm = f"✅ Статус №{oid} → В роботі"
         db_update_status(oid, "work")
     elif status == "reject":
-        client_msg = (f"❌ *Замовлення відхилено.*\n\n"
+        client_msg = (f"❌ *Замовлення №{oid} відхилено.*\n\n"
                       f"Привіт, {name}! На жаль, ми не можемо виконати це замовлення.\nЗв'яжіться з нами 📞")
         admin_confirm = f"❌ Замовлення №{oid} відхилено"
         db_update_status(oid, "rejected")
     else:
-        client_msg = (f"🎂 *Замовлення готове!*\n\n"
-                      f"Привіт, {name}! Ваш торт готовий до видачі 🎉")
+        client_msg = (f"🎂 *Замовлення №{oid} готове!*\n\n"
+                      f"Привіт, {name}! Ваш торт готовий до видачі 🎉\n"
+                      "Зв'яжіться з нами для уточнення деталей.")
         admin_confirm = f"✅ Статус №{oid} → Готово до видачі"
         db_update_status(oid, "done")
     try:
@@ -1286,12 +1421,15 @@ def handle_write_to_client(call):
         bot.answer_callback_query(call.id, "Замовлення не знайдено")
         return
     admin_state[call.message.chat.id] = {
-        "state": "writing", "order_id": oid,
-        "client_id": order["client_id"], "client_name": order["client_name"],
+        "state": "writing",
+        "order_id": oid,
+        "client_id": order["client_id"],
+        "client_name": order["client_name"],
     }
     bot.answer_callback_query(call.id)
     bot.send_message(call.message.chat.id,
-        f"✏️ Введіть повідомлення для *{order['client_name']}* (замовлення №{oid}):",
+        f"✏️ Введіть повідомлення для *{order['client_name']}* (замовлення №{oid}):\n\n"
+        "_Надішліть текст — він буде доставлений клієнту від імені бота_",
         parse_mode="Markdown")
 
 # ── Admin state machine ────────────────────────────────────────────────────────
@@ -1331,12 +1469,12 @@ def admin_reply_handler(message):
     elif current == "adding_faq_q":
         admin_state[message.chat.id] = {"state": "adding_faq_a", "question": message.text}
         bot.send_message(message.chat.id,
-            f"✅ Питання збережено:\n_«{message.text}»_\n\nКрок 2/2 — Введіть *відповідь*:",
+            f"✅ Питання збережено:\n_«{message.text}»_\n\nКрок 2/2 — Введіть *відповідь* на це питання:",
             parse_mode="Markdown")
 
     elif current == "adding_faq_a":
         admin_state.pop(message.chat.id, None)
-        faq_id = db_add_faq(state.get("question",""), message.text)
+        faq_id = db_add_faq(state.get("question", ""), message.text)
         bot.send_message(message.chat.id,
             f"✅ *Питання #{faq_id} додано до FAQ!*\n\n❓ {state.get('question')}\n\n💬 {message.text}",
             parse_mode="Markdown")
@@ -1350,7 +1488,7 @@ def admin_reply_handler(message):
             return
         bot.send_message(message.chat.id, f"🔍 Знайдено: *{len(results)}* замовлень", parse_mode="Markdown")
         for o in results:
-            markup = build_admin_markup(o["id"]) if o["status"] not in ("done","rejected") else None
+            markup = build_admin_markup(o["id"]) if o["status"] not in ("done", "rejected") else None
             bot.send_message(message.chat.id, format_order_text(o), parse_mode="Markdown", reply_markup=markup)
 
     elif current == "broadcasting":
@@ -1416,7 +1554,8 @@ def handle_delete(call):
         bot.edit_message_reply_markup(call.message.chat.id, call.message.message_id,
             reply_markup=build_delete_confirm_markup(oid))
     else:
-        action, oid = parts[1], int(parts[2])
+        action = parts[1]
+        oid = int(parts[2])
         if action == "yes":
             db_delete_order(oid)
             bot.answer_callback_query(call.id, f"🗑️ Замовлення №{oid} видалено")
@@ -1440,9 +1579,6 @@ def export_orders(message):
         return
     wb = Workbook()
     ws = wb.active
-    if ws is None:
-        bot.send_message(message.chat.id, "❌ Помилка створення файлу Excel.")
-        return
     ws.title = "Замовлення"
     header_fill = PatternFill(start_color="2E86AB", end_color="2E86AB", fill_type="solid")
     header_font = Font(bold=True, color="FFFFFF", size=11)
@@ -1451,28 +1587,27 @@ def export_orders(message):
     col_widths = [5, 18, 18, 18, 22, 6, 35, 14]
     for col, (h, w) in enumerate(zip(headers, col_widths), start=1):
         cell = ws.cell(row=1, column=col, value=h)
-        if isinstance(cell, _XLCell):
-            cell.font = header_font
-            cell.fill = header_fill
-            cell.alignment = center
-            ws.column_dimensions[cell.column_letter].width = w
+        cell.font = header_font
+        cell.fill = header_fill
+        cell.alignment = center
+        ws.column_dimensions[cell.column_letter].width = w
     ws.row_dimensions[1].height = 22
     status_colors = {"new": "FFF9C4", "work": "C8E6C9", "done": "BBDEFB", "rejected": "FFCDD2"}
     for row_idx, o in enumerate(orders, start=2):
-        dt = parse_created_at(o.get("created_at"))
-        created = dt.strftime("%d.%m.%Y %H:%M") if dt else "—"
+        status_key = o["status"]
+        status_label = STATUS_LABELS.get(status_key, status_key)
+        created = o["created_at"].strftime("%d.%m.%Y %H:%M") if o["created_at"] else "—"
         row_fill = PatternFill(
-            start_color=status_colors.get(o["status"], "FFFFFF"),
-            end_color=status_colors.get(o["status"], "FFFFFF"), fill_type="solid"
+            start_color=status_colors.get(status_key, "FFFFFF"),
+            end_color=status_colors.get(status_key, "FFFFFF"),
+            fill_type="solid"
         )
         values = [o["id"], created, o["client_name"], o["phone"],
-                  o["filling"], o["kg"], o["description"],
-                  STATUS_LABELS.get(o["status"], o["status"])]
+                  o["filling"], o["kg"], o["description"], status_label]
         for col, val in enumerate(values, start=1):
             cell = ws.cell(row=row_idx, column=col, value=val)
-            if isinstance(cell, _XLCell):
-                cell.fill = row_fill
-                cell.alignment = Alignment(vertical="center", wrap_text=(col == 7))
+            cell.fill = row_fill
+            cell.alignment = Alignment(vertical="center", wrap_text=(col == 7))
         ws.row_dimensions[row_idx].height = 18
     ws.freeze_panes = "A2"
     buf = io.BytesIO()
@@ -1480,10 +1615,11 @@ def export_orders(message):
     buf.seek(0)
     filename = f"замовлення_{datetime.now().strftime('%d-%m-%Y')}.xlsx"
     bot.send_document(message.chat.id, (filename, buf),
-        caption=f"📊 Експорт — {len(orders)} замовлень | {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+        caption=f"📊 Експорт замовлень — {len(orders)} шт.\n📅 {datetime.now().strftime('%d.%m.%Y %H:%M')}")
+
+# ── Entry point ────────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    print("🔗 Підключення до Supabase...")
-    db_init_faq()
-    print("✅ Бот запущено! База — Supabase (REST API)")
+    db_init()
+    print("Бот запущено...")
     bot.polling(none_stop=True)
