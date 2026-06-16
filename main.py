@@ -404,22 +404,10 @@ def cakes_keyboard():
 
 def fillings_inline():
     markup = types.InlineKeyboardMarkup(row_width=1)
-    buttons = [
-        types.InlineKeyboardButton("🍰 Бісквіт з фруктами", callback_data="fill_Бісквіт з фруктами"),
-        types.InlineKeyboardButton("🍓 Полуничне тірамісу", callback_data="fill_Полуничне тірамісу"),
-        types.InlineKeyboardButton("🍒 Вишня-шоколад", callback_data="fill_Вишня-шоколад"),
-        types.InlineKeyboardButton("🫐 Лісові ягоди", callback_data="fill_Лісові ягоди"),
-        types.InlineKeyboardButton("🥭 Манго-маракуя", callback_data="fill_Манго-маракуя"),
-        types.InlineKeyboardButton("🍌 Горіхова карамель-банан", callback_data="fill_Горіхова карамель-банан"),
-        types.InlineKeyboardButton("🍪 Орео", callback_data="fill_Орео"),
-        types.InlineKeyboardButton("🌿 Фісташка-малина", callback_data="fill_Фісташка-малина"),
-        types.InlineKeyboardButton("🍫 Ферреро Роше", callback_data="fill_Ферреро Роше"),
-        types.InlineKeyboardButton("🍫 Трюфель", callback_data="fill_Трюфель"),
-    ]
-    markup.add(*buttons)
+    for f in db_get_fillings():
+        markup.add(types.InlineKeyboardButton(f["name"], callback_data=f"fill_{f['name']}"))
     markup.add(types.InlineKeyboardButton("❌ Скасувати замовлення", callback_data="order_cancel"))
     return markup
-
 
 CAKES = {
     "Бісківіт з фруктами":     "🍰 Бісквіт + крем + фрукти\n💰 1200 грн/кг",
@@ -982,16 +970,16 @@ def contacts(message):
     text = (
         "📍 *Контакти та самовивіз*\n\n"
         "🏬 *Адреса:*\n"
-        "м. Львів, проспект Свободи, 35\n"
-        "_(біля Оперного Театру)_\n\n"
+        "м. Львів, вул. Пасічна, 188а\n"
+        "_(біля ТРЦ Вікторія Гарденс)_\n\n"
         "📞 *Телефон:*\n"
         "+380XXXXXXXXX\n\n"
         "💬 *Instagram / Viber / WhatsApp:*\n"
-        "@cakeshop\n\n"
+        "@cakebot\n\n"
         "🕐 *Години роботи:*\n"
         "Пн–Пт: 09:00 – 19:00\n"
         "Сб–Нд: 10:00 – 18:00\n\n"
-        "📦 Самовивіз — за домовленістю\n"
+        "📦 Самовивіз — безкоштовно\n"
         "🚗 Доставка — за домовленістю\n\n"
         "👇 Натисніть кнопку нижче щоб відкрити локацію на карті:"
     )
@@ -1002,7 +990,7 @@ def contacts(message):
 @bot.callback_query_handler(func=lambda call: call.data == "send_location")
 def send_location(call):
     bot.answer_callback_query(call.id)
-    bot.send_location(call.message.chat.id, 49.842915, 24.026029)
+    bot.send_location(call.message.chat.id, VICTORIA_GARDENS_LAT, VICTORIA_GARDENS_LON)
 
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
@@ -1062,15 +1050,6 @@ def receive_client_question(message):
     bot.send_message(message.chat.id, "✅ Ваше питання надіслано! Ми відповімо вам у цьому чаті.",
         reply_markup=main_keyboard())
 
-@bot.message_handler(commands=['addfaq'])
-def admin_add_faq(message):
-    if message.chat.id != ADMIN_ID:
-        return
-    admin_state[message.chat.id] = {"state": "adding_faq_q"}
-    bot.send_message(message.chat.id,
-        "➕ *Додати питання в FAQ*\n\nКрок 1/2 — Введіть *текст питання*:",
-        parse_mode="Markdown")
-
 @bot.message_handler(commands=['addfilling'])
 def admin_add_filling(message):
     if message.chat.id != ADMIN_ID:
@@ -1096,6 +1075,15 @@ def admin_del_filling(message):
         ))
     bot.send_message(message.chat.id, "🗑️ *Оберіть начинку для видалення:*",
         parse_mode="Markdown", reply_markup=markup)
+
+@bot.message_handler(commands=['addfaq'])
+def admin_add_faq(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    admin_state[message.chat.id] = {"state": "adding_faq_q"}
+    bot.send_message(message.chat.id,
+        "➕ *Додати питання в FAQ*\n\nКрок 1/2 — Введіть *текст питання*:",
+        parse_mode="Markdown")
 
 @bot.message_handler(commands=['delfaq'])
 def admin_del_faq(message):
@@ -1484,7 +1472,7 @@ def admin_reply_handler(message):
             bot.send_message(message.chat.id,
                 f"❌ Не вдалося надіслати. Перевірте ID.\n_{e}_", parse_mode="Markdown")
 
-# ── Delete filling callback ───────────────────────────────────────────────
+# ── Delete order ───────────────────────────────────────────────────────────────
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delfill_"))
 def handle_delete_filling(call):
@@ -1495,8 +1483,6 @@ def handle_delete_filling(call):
     bot.answer_callback_query(call.id, "✅ Начинку видалено")
     bot.edit_message_text(f"✅ Начинку *{name}* видалено.",
         call.message.chat.id, call.message.message_id, parse_mode="Markdown")
-
-# ── Delete order ───────────────────────────────────────────────────────────────
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("del_"))
 def handle_delete(call):
