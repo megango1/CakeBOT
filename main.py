@@ -980,8 +980,8 @@ def back(message):
         return
     bot.send_message(message.chat.id, "Головне меню:", reply_markup=main_keyboard())
 
-VICTORIA_GARDENS_LAT = 49.81858
-VICTORIA_GARDENS_LON = 23.97621
+PICKUP_LAT = 49.84302
+PICKUP_LON = 24.02493
 
 @bot.message_handler(func=lambda m: m.text == "📞 Контакти")
 def contacts(message):
@@ -990,8 +990,8 @@ def contacts(message):
     text = (
         "📍 *Контакти та самовивіз*\n\n"
         "🏬 *Адреса:*\n"
-        "м. Львів, вул. Пасічна, 188а\n"
-        "_(біля ТРЦ Вікторія Гарденс)_\n\n"
+        "м. Львів, просп. Свободи\n"
+        "_(поблизу Оперного театру)_\n\n"
         "📞 *Телефон:*\n"
         "+380XXXXXXXXX\n\n"
         "💬 *Instagram / Viber / WhatsApp:*\n"
@@ -1010,7 +1010,7 @@ def contacts(message):
 @bot.callback_query_handler(func=lambda call: call.data == "send_location")
 def send_location(call):
     bot.answer_callback_query(call.id)
-    bot.send_location(call.message.chat.id, VICTORIA_GARDENS_LAT, VICTORIA_GARDENS_LON)
+    bot.send_location(call.message.chat.id, PICKUP_LAT, PICKUP_LON)
 
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
