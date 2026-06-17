@@ -1460,18 +1460,17 @@ def admin_reply_handler(message):
     elif current == "adding_filling_desc":
         admin_state[message.chat.id] = {**state, "state": "adding_filling_photo", "desc": message.text}
         bot.send_message(message.chat.id,
-            f"✅ Опис: _{message.text}_\n\nКрок 4/4 — Надішліть *фото* начинки (або напишіть `-` щоб пропустити):",
-            parse_mode="Markdown")
+            f"✅ Опис: _{message.text}_\n\nКрок 4/4 — Введіть *URL-посилання на фото* начинки\n_(або напишіть `-` щоб пропустити)_:",
 
     elif current == "adding_filling_photo":
-        admin_state.pop(message.chat.id, None)
-        photo = None
-        if message.content_type == "photo":
-            photo = message.photo[-1].file_id
-        fid = db_add_filling(state.get("name", ""), state.get("price", 0), state.get("desc"), photo)
-        bot.send_message(message.chat.id,
-            f"✅ *Начинку додано!*\n\n🍰 {state.get('name')}\n💰 {state.get('price')} грн/кг\n📝 {state.get('desc')}\n🖼 {'є' if photo else 'немає'}",
-            parse_mode="Markdown")
+    admin_state.pop(message.chat.id, None)
+    photo = None
+    if message.content_type == "text" and message.text.strip() != "-":
+        photo = message.text.strip()
+    fid = db_add_filling(state.get("name", ""), state.get("price", 0), state.get("desc"), photo)
+    bot.send_message(message.chat.id,
+        f"✅ *Начинку #{fid} додано!*\n\n🍰 {state.get('name')}\n💰 {state.get('price')} грн/кг\n📝 {state.get('desc')}\n🖼 {photo if photo else 'без фото'}",
+        parse_mode="Markdown")
 
     elif current == "sending_template":
         admin_state.pop(message.chat.id, None)
