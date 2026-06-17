@@ -459,9 +459,27 @@ def start(message):
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=main_keyboard())
 
-# ── /help (admin) ──────────────────────────────────────────────────────────────
+# ── /help (clients) ────────────────────────────────────────────────────────────
 
 @bot.message_handler(commands=['help'])
+def client_help(message):
+    if is_blocked_user(message):
+        return
+    text = (
+        "ℹ️ *Команди бота*\n\n"
+        "🍰 *Замовлення:*\n"
+        "/start — головне меню\n"
+        "/mystatus — переглянути свої замовлення\n"
+        "/repeat — повторити останнє замовлення\n\n"
+        "📋 *Інформація:*\n"
+        "/help — ця довідка\n\n"
+        "👇 Або скористайтесь кнопками меню нижче!"
+    )
+    bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=main_keyboard())
+
+# ── /ahelp (admin) ─────────────────────────────────────────────────────────────
+
+@bot.message_handler(commands=['ahelp'])
 def admin_help(message):
     if message.chat.id != ADMIN_ID:
         return
@@ -496,7 +514,7 @@ def admin_help(message):
         "/blocked — список заблокованих\n\n"
         "📢 *Розсилка:*\n"
         "/broadcast — повідомлення всім клієнтам\n\n"
-        "/help — ця довідка"
+        "/ahelp — ця довідка"
     )
     bot.send_message(message.chat.id, text, parse_mode="Markdown")
 
