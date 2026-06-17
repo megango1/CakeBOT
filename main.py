@@ -994,6 +994,7 @@ def contacts(message):
         "💬 *Instagram:*\n"
         "@sysoeva.cake\n\n"
         "🚗 Доставка — за домовленістю"
+        "👇 Instagram 👇"
     )
     markup = types.InlineKeyboardMarkup()
     markup.add(types.InlineKeyboardButton("📸 Instagram", url="https://www.instagram.com/sysoeva.cake/"))
