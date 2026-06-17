@@ -254,6 +254,8 @@ def db_add_filling(name, price, description=None, photo=None):
 def db_delete_filling(filling_id):
     _delete("fillings", {"id": filling_id})
 
+def db_update_filling(filling_id, data: dict):
+    _update("fillings", {"id": filling_id}, data)
 
 # ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -479,6 +481,7 @@ def admin_help(message):
         "/questions — непрочитані питання\n\n"
         "🍰 *Начинки:*\n"
         "/addfilling — додати начинку\n"
+        "/editfilling — редагувати начинку\n"
         "/delfilling — видалити начинку\n\n"
         "📸 *Галерея:*\n"
         "/addphoto — додати фото\n"
@@ -1049,6 +1052,8 @@ def receive_client_question(message):
     bot.send_message(message.chat.id, "✅ Ваше питання надіслано! Ми відповімо вам у цьому чаті.",
         reply_markup=main_keyboard())
 
+# ── Admin: fillings ────────────────────────────────────────────────────────────
+
 @bot.message_handler(commands=['addfilling'])
 def admin_add_filling(message):
     if message.chat.id != ADMIN_ID:
@@ -1057,6 +1062,23 @@ def admin_add_filling(message):
     bot.send_message(message.chat.id,
         "➕ *Додати начинку*\n\nКрок 1/4 — Введіть *назву начинки*:",
         parse_mode="Markdown")
+
+@bot.message_handler(commands=['editfilling'])
+def admin_edit_filling(message):
+    if message.chat.id != ADMIN_ID:
+        return
+    rows = db_get_fillings()
+    if not rows:
+        bot.send_message(message.chat.id, "📭 Начинок немає.")
+        return
+    markup = types.InlineKeyboardMarkup(row_width=1)
+    for f in rows:
+        markup.add(types.InlineKeyboardButton(
+            f"✏️ {f['name']} ({f['price']} грн/кг)",
+            callback_data=f"editfill_{f['id']}"
+        ))
+    bot.send_message(message.chat.id, "✏️ *Оберіть начинку для редагування:*",
+        parse_mode="Markdown", reply_markup=markup)
 
 @bot.message_handler(commands=['delfilling'])
 def admin_del_filling(message):
@@ -1074,6 +1096,64 @@ def admin_del_filling(message):
         ))
     bot.send_message(message.chat.id, "🗑️ *Оберіть начинку для видалення:*",
         parse_mode="Markdown", reply_markup=markup)
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editfill_") and call.data.count("_") == 1)
+def handle_editfill_select(call):
+    if call.message.chat.id != ADMIN_ID:
+        return
+    fid = int(call.data.split("_")[1])
+    rows = db_get_fillings()
+    f = next((x for x in rows if x["id"] == fid), None)
+    if not f:
+        bot.answer_callback_query(call.id, "Начинку не знайдено")
+        return
+    bot.answer_callback_query(call.id)
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    markup.add(
+        types.InlineKeyboardButton("🍰 Назва",  callback_data=f"editfill_{fid}_name"),
+        types.InlineKeyboardButton("💰 Ціна",   callback_data=f"editfill_{fid}_price"),
+        types.InlineKeyboardButton("📝 Опис",   callback_data=f"editfill_{fid}_description"),
+        types.InlineKeyboardButton("🖼 Фото",   callback_data=f"editfill_{fid}_photo"),
+    )
+    bot.edit_message_text(
+        f"✏️ *{f['name']}*\n\n"
+        f"💰 Ціна: {f['price']} грн/кг\n"
+        f"📝 Опис: {f.get('description') or '—'}\n"
+        f"🖼 Фото: {'є' if f.get('photo') else 'немає'}\n\n"
+        "Що редагуємо?",
+        chat_id=call.message.chat.id,
+        message_id=call.message.message_id,
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith("editfill_") and call.data.count("_") == 2)
+def handle_editfill_field(call):
+    if call.message.chat.id != ADMIN_ID:
+        return
+    parts = call.data.split("_")
+    fid = int(parts[1])
+    field = parts[2]
+    field_labels = {
+        "name":        ("назву", "текстом"),
+        "price":       ("ціну", "числом, наприклад 1400"),
+        "description": ("опис", "текстом (або `-` щоб очистити)"),
+        "photo":       ("URL фото", "посиланням (або `-` щоб очистити)"),
+    }
+    label, hint = field_labels.get(field, (field, ""))
+    bot.answer_callback_query(call.id)
+    admin_state[call.message.chat.id] = {
+        "state": "editing_filling_value",
+        "filling_id": fid,
+        "field": field,
+    }
+    bot.send_message(
+        call.message.chat.id,
+        f"✏️ Введіть нову *{label}* ({hint}):",
+        parse_mode="Markdown"
+    )
+
+# ── Admin: FAQ ─────────────────────────────────────────────────────────────────
 
 @bot.message_handler(commands=['addfaq'])
 def admin_add_faq(message):
@@ -1351,6 +1431,7 @@ ADMIN_STATES = (
     "broadcasting", "searching", "adding_photo_caption",
     "adding_tpl_title", "adding_tpl_text", "sending_template",
     "adding_filling_name", "adding_filling_price", "adding_filling_desc", "adding_filling_photo",
+    "editing_filling_value",
 )
 
 @bot.message_handler(
@@ -1465,7 +1546,7 @@ def admin_reply_handler(message):
             parse_mode="Markdown"
         )
 
-        elif current == "adding_filling_photo":
+    elif current == "adding_filling_photo":
         admin_state.pop(message.chat.id, None)
         photo = None
         if message.content_type == "text" and message.text.strip() != "-":
@@ -1474,6 +1555,40 @@ def admin_reply_handler(message):
         bot.send_message(
             message.chat.id,
             f"✅ *Начинку #{fid} додано!*\n\n🍰 {state.get('name')}\n💰 {state.get('price')} грн/кг\n📝 {state.get('desc')}\n🖼 {photo if photo else 'без фото'}",
+            parse_mode="Markdown"
+        )
+
+    elif current == "editing_filling_value":
+        admin_state.pop(message.chat.id, None)
+        fid = state["filling_id"]
+        field = state["field"]
+        text = message.text.strip()
+        if field == "price":
+            try:
+                value = int(text)
+            except ValueError:
+                bot.send_message(message.chat.id,
+                    "❌ Ціна має бути числом. Спробуй ще раз: /editfilling")
+                return
+        elif text == "-":
+            value = None
+        else:
+            value = text
+        db_update_filling(fid, {field: value})
+        rows = db_get_fillings()
+        f = next((x for x in rows if x["id"] == fid), None)
+        field_labels = {
+            "name": "Назва", "price": "Ціна",
+            "description": "Опис", "photo": "Фото",
+        }
+        display = value if value is not None else "очищено"
+        if field == "price" and value is not None:
+            display = f"{value} грн/кг"
+        bot.send_message(
+            message.chat.id,
+            f"✅ *{field_labels.get(field, field)} оновлено!*\n\n"
+            f"🍰 {f['name'] if f else f'#{fid}'}\n"
+            f"Нове значення: {display}",
             parse_mode="Markdown"
         )
 
@@ -1491,7 +1606,7 @@ def admin_reply_handler(message):
             bot.send_message(message.chat.id,
                 f"❌ Не вдалося надіслати. Перевірте ID.\n_{e}_", parse_mode="Markdown")
 
-# ── Delete order ───────────────────────────────────────────────────────────────
+# ── Delete filling / order ─────────────────────────────────────────────────────
 
 @bot.callback_query_handler(func=lambda call: call.data.startswith("delfill_"))
 def handle_delete_filling(call):
@@ -1586,4 +1701,4 @@ if __name__ == "__main__":
     db_init_fillings()
     db_init_faq()
     print("✅ Бот запущено! База — Supabase (REST API)")
-    bot.polling(none_stop=True)
+    bot.infinity_polling()
