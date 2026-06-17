@@ -988,29 +988,16 @@ def contacts(message):
     if is_blocked_user(message):
         return
     text = (
-        "📍 *Контакти та самовивіз*\n\n"
-        "🏬 *Адреса:*\n"
-        "м. Львів, просп. Свободи\n"
-        "_(поблизу Оперного театру)_\n\n"
+        "📍 *Контакти*\n\n"
         "📞 *Телефон:*\n"
         "+380XXXXXXXXX\n\n"
-        "💬 *Instagram / Viber / WhatsApp:*\n"
-        "@cakebot\n\n"
-        "🕐 *Години роботи:*\n"
-        "Пн–Пт: 09:00 – 19:00\n"
-        "Сб–Нд: 10:00 – 18:00\n\n"
-        "📦 Самовивіз — безкоштовно\n"
-        "🚗 Доставка — за домовленістю\n\n"
-        "👇 Натисніть кнопку нижче щоб відкрити локацію на карті:"
+        "💬 *Instagram:*\n"
+        "@sysoeva.cake\n\n"
+        "🚗 Доставка — за домовленістю"
     )
     markup = types.InlineKeyboardMarkup()
-    markup.add(types.InlineKeyboardButton("📍 Показати на карті", callback_data="send_location"))
+    markup.add(types.InlineKeyboardButton("📸 Instagram", url="https://www.instagram.com/sysoeva.cake/"))
     bot.send_message(message.chat.id, text, parse_mode="Markdown", reply_markup=markup)
-
-@bot.callback_query_handler(func=lambda call: call.data == "send_location")
-def send_location(call):
-    bot.answer_callback_query(call.id)
-    bot.send_location(call.message.chat.id, PICKUP_LAT, PICKUP_LON)
 
 # ── FAQ ────────────────────────────────────────────────────────────────────────
 
