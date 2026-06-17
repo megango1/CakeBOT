@@ -568,7 +568,7 @@ def client_mystatus(message):
         dt = parse_created_at(o.get("created_at"))
         date_str = dt.strftime("%d.%m.%Y") if dt else "—"
         bot.send_message(message.chat.id,
-            f"📦 *Замовлення #{o['id']}*\n📅 {date_str}\n🍰 {o['filling']} — {o['kg']} кг\n📊 {status_label}",
+            f"📦 *Замовлення *\n📅 {date_str}\n🍰 {o['filling']} — {o['kg']} кг\n📊 {status_label}",
             parse_mode="Markdown")
 
 # ── /repeat (client) ───────────────────────────────────────────────────────────
