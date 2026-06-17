@@ -993,7 +993,7 @@ def contacts(message):
         "+380XXXXXXXXX\n\n"
         "💬 *Instagram:*\n"
         "@sysoeva.cake\n\n"
-        "🚗 Доставка — за домовленістю"
+        "🚗 Доставка — за домовленістю\n\n"
         "👇 Instagram 👇"
     )
     markup = types.InlineKeyboardMarkup()
